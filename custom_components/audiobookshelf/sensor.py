@@ -29,75 +29,112 @@ _LOGGER = logging.getLogger(__name__)
 
 def count_active_users(data: dict) -> int:
     """Take in an object with an array of users and counts the active ones."""
+    _LOGGER.debug("Entering count_active_users with data: %s", data)
     count = 0
     for user in data["users"]:
         if user["isActive"] and user["username"] != "hass":
             count += 1
+    _LOGGER.debug("Exiting count_active_users, returning: %s", count)
     return count
 
 
 def clean_user_attributes(data: dict) -> dict:
     """Remove the token and some extra data from users."""
+    _LOGGER.debug("Entering clean_user_attributes with data: %s", data)
     for user in data["users"]:
         user["token"] = "<redacted>"  # noqa: S105
+    _LOGGER.debug("Exiting clean_user_attributes, returning: %s", data)
     return data
 
 
 def count_open_sessions(data: dict) -> int:
     """Count the number of open stream sessions."""
-    return len(data["openSessions"])
+    _LOGGER.debug("Entering count_open_sessions with data: %s", data)
+    count = len(data["openSessions"])
+    _LOGGER.debug("Exiting count_open_sessions, returning: %s", count)
+    return count
 
 
 def count_libraries(data: dict) -> int:
     """Count the number libraries."""
-    return len(data["libraries"])
+    _LOGGER.debug("Entering count_libraries with data: %s", data)
+    count = len(data["libraries"])
+    _LOGGER.debug("Exiting count_libraries, returning: %s", count)
+    return count
 
 
 def extract_library_details(data: dict) -> dict:
     """Extract the details from the library."""
+    _LOGGER.debug("Entering extract_library_details with data: %s", data)
     details = {}
     for library in data.get("libraries", []):
-        details.update(
-            {
-                library["id"]: {
-                    "mediaType": library["mediaType"],
-                    "provider": library["provider"],
-                }
+        library_id = library.get("id")
+        if library_id:
+            details[library_id] = {
+                "mediaType": library.get("mediaType"),
+                "provider": library.get("provider"),
             }
-        )
+            _LOGGER.debug(
+                "Extracted details for library ID %s: %s",
+                library_id,
+                details[library_id],
+            )
+        else:
+            _LOGGER.warning("Library ID not found in library data: %s", library)
+    _LOGGER.debug("Exiting extract_library_details, returning: %s", details)
     return details
 
 
 def get_total_duration(total_duration: float | None) -> float | None:
     """Calculate the total duration in hours and round it to 0 decimal places."""
+    _LOGGER.debug("Entering get_total_duration with total_duration: %s", total_duration)
     if total_duration is None:
+        _LOGGER.debug("Total duration is None, returning None")
         return None
-    return round(total_duration / 60.0 / 60.0, 0)
+    duration_hours = round(total_duration / 60.0 / 60.0, 0)
+    _LOGGER.debug("Calculated duration in hours: %s", duration_hours)
+    _LOGGER.debug("Exiting get_total_duration, returning: %s", duration_hours)
+    return duration_hours
 
 
 def get_total_size(total_size: float | None) -> float | None:
     """Convert the size to human readable."""
+    _LOGGER.debug("Entering get_total_size with total_size: %s", total_size)
     if total_size is None:
+        _LOGGER.debug("Total size is None, returning None")
         return None
-    return round(total_size / 1024.0 / 1024.0 / 1024.0, 2)
+    size_gb = round(total_size / 1024.0 / 1024.0 / 1024.0, 2)
+    _LOGGER.debug("Calculated size in GB: %s", size_gb)
+    _LOGGER.debug("Exiting get_total_size, returning: %s", size_gb)
+    return size_gb
 
 
 def get_library_stats(data: dict) -> dict:
     """Get statistics for each library."""
-    return extract_library_details(data)
+    _LOGGER.debug("Entering get_library_stats with data: %s", data)
+    library_stats = extract_library_details(data)
+    _LOGGER.debug("Exiting get_library_stats, returning: %s", library_stats)
+    return library_stats
 
 
 def do_nothing(data: dict) -> dict:
     """Return the input data without any modifications."""
+    _LOGGER.debug("Entering do_nothing with data: %s", data)
+    _LOGGER.debug("Exiting do_nothing, returning input data")
     return data
 
 
 def extract_server_version(data: dict) -> str | None:
     """Extract the server version from the authorize endpoint."""
+    _LOGGER.debug("Entering extract_server_version with data: %s", data)
     try:
-        return data["serverSettings"]["version"]
+        version = data["serverSettings"]["version"]
+        _LOGGER.debug("Extracted server version: %s", version)
+        _LOGGER.debug("Exiting extract_server_version, returning: %s", version)
+        return version
     except KeyError:
         _LOGGER.warning("Server version not found in API response.")
+        _LOGGER.debug("Exiting extract_server_version, returning None")
         return None
 
 
@@ -131,7 +168,7 @@ sensors: dict[str, Sensor] = {
         "name": "Audiobookshelf Server Version",
         "data_function": extract_server_version,
         "attributes_function": do_nothing,
-        "unit": None,
+        "unit": "version",
     },
 }
 
@@ -142,34 +179,47 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the sensor platform."""
+    _LOGGER.debug("Entering async_setup_entry")
     conf = entry.data
 
     _LOGGER.debug("Configuration data: %s", clean_config(conf.copy()))
 
     async with aiohttp.ClientSession() as session:
         headers = {"Authorization": f"Bearer {conf[CONF_API_KEY]}"}
-        async with session.get(
-            f"{conf[CONF_URL]}/api/libraries", headers=headers
-        ) as response:
-            if response.status != HTTP_OK:
-                msg = f"Failed to connect to API: {response.status}"
-                _LOGGER.error("%s", msg)
-                raise ConfigEntryNotReady(msg)
+        _LOGGER.debug("Headers for API request: %s", headers)
+        url = f"{conf[CONF_URL]}/api/libraries"
+        _LOGGER.debug("Fetching libraries from: %s", url)
+        try:
+            async with session.get(url, headers=headers) as response:
+                _LOGGER.debug("Response status from API: %s", response.status)
+                if response.status != HTTP_OK:
+                    msg = f"Failed to connect to API: {response.status}"
+                    _LOGGER.error("%s", msg)
+                    raise ConfigEntryNotReady(msg)
+                _LOGGER.debug("Successfully connected to API")
+        except aiohttp.ClientError as e:
+            _LOGGER.error("AIOHTTP error during API request: %s", e)
+            raise ConfigEntryNotReady(f"Failed to connect to API: {e}")
 
     coordinator = AudiobookshelfDataUpdateCoordinator(hass, entry)
+    _LOGGER.debug("AudiobookshelfDataUpdateCoordinator initialized: %s", coordinator)
 
     libraries: list[Library] = await coordinator.get_libraries()
+    _LOGGER.debug("Retrieved libraries: %s", libraries)
     coordinator.generate_library_sensors(libraries)
+    _LOGGER.debug("Generated library sensors")
 
     await coordinator.async_config_entry_first_refresh()
+    _LOGGER.debug("Initial data fetch completed")
 
     entities = [
         AudiobookshelfSensor(coordinator, sensor) for sensor in sensors.values()
     ]
+    _LOGGER.debug("Created sensor entities: %s", entities)
 
-    _LOGGER.debug("Sensors: %s", sensors)
-
+    _LOGGER.debug("Adding entities to Home Assistant: %s", entities)
     async_add_entities(entities, update_before_add=True)
+    _LOGGER.debug("Exiting async_setup_entry")
 
 
 @dataclass
@@ -220,30 +270,34 @@ class Library:
 
 def camel_to_snake(data: dict[str, Any] | list[Any]) -> dict[str, Any] | list[Any]:
     """Convert camelCase keys to snake_case."""
+    _LOGGER.debug("Entering camel_to_snake with data: %s", data)
 
     def _convert_key(key: str) -> str:
-        return "".join(
+        snake_case_key = "".join(
             ["_" + char.lower() if char.isupper() else char for char in key]
         ).lstrip("_")
+        _LOGGER.debug("Converted key '%s' to '%s'", key, snake_case_key)
+        return snake_case_key
 
     if isinstance(data, dict):
-        return {
+        converted_data = {
             _convert_key(key): camel_to_snake(value)
-            if isinstance(value, dict)
-            else camel_to_snake(list(value))
-            if isinstance(value, list)
+            if isinstance(value, (dict, list))
             else value
             for key, value in data.items()
         }
+        _LOGGER.debug("Converted dictionary: %s", converted_data)
+        _LOGGER.debug("Exiting camel_to_snake, returning: %s", converted_data)
+        return converted_data
     if isinstance(data, list):
-        return [
-            camel_to_snake(dict(item))
-            if isinstance(item, dict)
-            else camel_to_snake(list(item))
-            if isinstance(item, list)
-            else item
+        converted_list = [
+            camel_to_snake(item) if isinstance(item, (dict, list)) else item
             for item in data
         ]
+        _LOGGER.debug("Converted list: %s", converted_list)
+        _LOGGER.debug("Exiting camel_to_snake, returning: %s", converted_list)
+        return converted_list
+    _LOGGER.debug("Exiting camel_to_snake, returning: %s", data)
     return data
 
 
@@ -252,10 +306,12 @@ class AudiobookshelfDataUpdateCoordinator(DataUpdateCoordinator):
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry) -> None:
         """Initialize."""
+        _LOGGER.debug("Entering AudiobookshelfDataUpdateCoordinator.__init__")
         self.config_entry = config_entry
         self.conf = self.config_entry.data
         if self.config_entry is None:
             msg = "Config is none on coordinator"
+            _LOGGER.error(msg)
             raise ConfigEntryNotReady(msg)
 
         super().__init__(
@@ -264,29 +320,57 @@ class AudiobookshelfDataUpdateCoordinator(DataUpdateCoordinator):
             name="audiobookshelf",
             update_interval=timedelta(seconds=self.conf[CONF_SCAN_INTERVAL]),
         )
+        _LOGGER.debug("Exiting AudiobookshelfDataUpdateCoordinator.__init__")
 
     async def get_libraries(self) -> list[Library]:
         """Fetch library id list from API."""
+        _LOGGER.debug("Entering AudiobookshelfDataUpdateCoordinator.get_libraries")
         async with aiohttp.ClientSession() as session:
             headers = {"Authorization": f"Bearer {self.conf[CONF_API_KEY]}"}
-            async with session.get(
-                f"{self.conf[CONF_URL]}/api/libraries", headers=headers
-            ) as response:
-                if response.status == HTTP_OK:
-                    data: dict[str, Any] = await response.json()
-                    for lib in data["libraries"]:
-                        _LOGGER.debug("Converting library: %s", lib)
-                    return [
-                        from_dict(
-                            data_class=Library,
-                            data=(dict(camel_to_snake(lib))),
+            _LOGGER.debug("Headers for API request: %s", headers)
+            url = f"{self.conf[CONF_URL]}/api/libraries"
+            _LOGGER.debug("Fetching libraries from: %s", url)
+            try:
+                async with session.get(url, headers=headers) as response:
+                    _LOGGER.debug("Response status from API: %s", response.status)
+                    if response.status == HTTP_OK:
+                        data: dict[str, Any] = await response.json()
+                        _LOGGER.debug("Received library data: %s", data)
+                        libraries_data = data.get("libraries", [])
+                        _LOGGER.debug("Libraries data: %s", libraries_data)
+                        libraries = [
+                            from_dict(
+                                data_class=Library, data=(dict(camel_to_snake(lib)))
+                            )
+                            for lib in libraries_data
+                        ]
+                        _LOGGER.debug("Converted libraries: %s", libraries)
+                        _LOGGER.debug(
+                            "Exiting AudiobookshelfDataUpdateCoordinator.get_libraries, returning %s",
+                            libraries,
                         )
-                        for lib in data["libraries"]
-                    ]
-        return []
+                        return libraries
+                    else:
+                        _LOGGER.error(
+                            "Failed to fetch libraries, status: %s", response.status
+                        )
+                        _LOGGER.debug(
+                            "Exiting AudiobookshelfDataUpdateCoordinator.get_libraries, returning empty list"
+                        )
+                        return []
+            except aiohttp.ClientError as e:
+                _LOGGER.error("AIOHTTP error fetching libraries: %s", e)
+                _LOGGER.debug(
+                    "Exiting AudiobookshelfDataUpdateCoordinator.get_libraries, returning empty list"
+                )
+                return []
 
     def generate_library_sensors(self, libraries: list[Library]) -> None:
         """Generate sensor configs for each library."""
+        _LOGGER.debug(
+            "Entering AudiobookshelfDataUpdateCoordinator.generate_library_sensors with libraries: %s",
+            libraries,
+        )
         for library in libraries:
             base_id = f"library_{library.id}"
             sensors.update(
@@ -295,8 +379,8 @@ class AudiobookshelfDataUpdateCoordinator(DataUpdateCoordinator):
                         "endpoint": f"api/libraries/{library.id}/stats",
                         "name": f"Audiobookshelf {library.name} Size",
                         "unique_id": f"{base_id}_size",
-                        "data_function": (
-                            lambda data: get_total_size(data.get("totalSize"))
+                        "data_function": lambda data: get_total_size(
+                            data.get("totalSize")
                         ),
                         "unit": "GB",
                         "attributes_function": do_nothing,
@@ -313,43 +397,59 @@ class AudiobookshelfDataUpdateCoordinator(DataUpdateCoordinator):
                         "endpoint": f"api/libraries/{library.id}/stats",
                         "name": f"Audiobookshelf {library.name} Duration",
                         "unique_id": f"{base_id}_duration",
-                        "data_function": (
-                            lambda data: get_total_duration(data.get("totalDuration"))
+                        "data_function": lambda data: get_total_duration(
+                            data.get("totalDuration")
                         ),
                         "unit": "hours",
                         "attributes_function": do_nothing,
                     },
                 }
             )
+        _LOGGER.debug(
+            "Exiting AudiobookshelfDataUpdateCoordinator.generate_library_sensors, updated sensors: %s",
+            sensors,
+        )
 
     async def _async_update_data(self) -> dict:
         """Fetch data from API endpoint."""
+        _LOGGER.debug("Entering AudiobookshelfDataUpdateCoordinator._async_update_data")
         headers = {"Authorization": f"Bearer {self.conf[CONF_API_KEY]}"}
         data = {}
-        # Ensure the 'api/authorize' endpoint is included
         unique_endpoints: set[str] = {sensor["endpoint"] for sensor in sensors.values()}
+        _LOGGER.debug("Fetching data for unique endpoints: %s", unique_endpoints)
         try:
             async with aiohttp.ClientSession() as session:
-                _LOGGER.debug(
-                    "Unique endpoints:\n%s",
-                    "\n".join(endpoint for endpoint in unique_endpoints),
-                )
-                for endppoint in unique_endpoints:
-                    async with session.get(
-                        f"{self.conf[CONF_URL]}/{endppoint}", headers=headers
-                    ) as response:
-                        if response.status != HTTP_OK:
-                            error_message = f"Error fetching data: {response.status}"
-                            raise UpdateFailed(error_message)
-                        data[endppoint] = await response.json()
-                    _LOGGER.debug(
-                        "Data returns for %s",
-                        f"{self.conf[CONF_URL]}/{endppoint}",
-                    )
-            return data  # noqa: TRY300
-        except aiohttp.ClientError as err:
-            msg = "Error fetching data"
-            raise UpdateFailed(msg) from err
+                for endpoint in unique_endpoints:
+                    url = f"{self.conf[CONF_URL]}/{endpoint}"
+                    _LOGGER.debug("Fetching data from: %s", url)
+                    try:
+                        async with session.get(url, headers=headers) as response:
+                            _LOGGER.debug(
+                                "Response status for %s: %s", endpoint, response.status
+                            )
+                            if response.status != HTTP_OK:
+                                error_message = f"Error fetching data for {endpoint}: {response.status}"
+                                _LOGGER.error(error_message)
+                                raise UpdateFailed(error_message)
+                            response_data = await response.json()
+                            data[endpoint] = response_data
+                            _LOGGER.debug(
+                                "Data received for %s: %s", endpoint, response_data
+                            )
+                    except aiohttp.ClientError as e:
+                        _LOGGER.error("AIOHTTP error fetching %s: %s", endpoint, e)
+                        raise UpdateFailed(f"Error fetching data for {endpoint}: {e}")
+            _LOGGER.debug(
+                "Exiting AudiobookshelfDataUpdateCoordinator._async_update_data, returning data: %s",
+                data,
+            )
+            return data
+        except UpdateFailed as err:
+            _LOGGER.error("Error during data update: %s", err)
+            _LOGGER.debug(
+                "Exiting AudiobookshelfDataUpdateCoordinator._async_update_data with failure"
+            )
+            raise
 
 
 class AudiobookshelfSensor(RestoreEntity, Entity):
@@ -359,6 +459,7 @@ class AudiobookshelfSensor(RestoreEntity, Entity):
         self, coordinator: AudiobookshelfDataUpdateCoordinator, sensor: Sensor
     ) -> None:
         """Initialize the sensor."""
+        _LOGGER.debug("Entering AudiobookshelfSensor.__init__ with sensor: %s", sensor)
         self._name = sensor["name"]
         self._unique_id = sensor.get("unique_id", self._name)
         self._attr_unit_of_measurement = sensor.get("unit", None)
@@ -369,21 +470,26 @@ class AudiobookshelfSensor(RestoreEntity, Entity):
         self._process_data = sensor["data_function"]
         self._process_attributes = sensor["attributes_function"]
         self.conf = self.coordinator.conf
+        _LOGGER.debug("Exiting AudiobookshelfSensor.__init__")
 
     async def async_added_to_hass(self) -> None:
         """Call when entity is added to hass."""
+        _LOGGER.debug("Entering AudiobookshelfSensor.async_added_to_hass")
         await super().async_added_to_hass()
-        # Only restore state if it's not the server version sensor
         if (
             self._endpoint != "api/authorize"
             and (last_state := await self.async_get_last_state()) is not None
         ):
             self._state = last_state.state
             self._attributes = last_state.attributes
+            _LOGGER.debug(
+                "Restored state: %s, attributes: %s", self._state, self._attributes
+            )
 
         self.async_on_remove(
             self.coordinator.async_add_listener(self.async_write_ha_state)
         )
+        _LOGGER.debug("Exiting AudiobookshelfSensor.async_added_to_hass")
 
     @property
     def name(self) -> str:
@@ -419,19 +525,28 @@ class AudiobookshelfSensor(RestoreEntity, Entity):
 
     async def async_update(self) -> None:
         """Fetch new state data for the sensor."""
+        _LOGGER.debug("Entering AudiobookshelfSensor.async_update")
         data = self.coordinator.data
         if data:
             endpoint_data = data.get(self._endpoint, {})
+            _LOGGER.debug("Data for endpoint %s: %s", self._endpoint, endpoint_data)
             if isinstance(endpoint_data, dict):
-                self._attr_extra_state_attributes.update(
-                    self._process_attributes(endpoint_data)
+                processed_attributes = self._process_attributes(endpoint_data)
+                self._attr_extra_state_attributes.update(processed_attributes)
+                _LOGGER.debug(
+                    "Updated extra state attributes: %s",
+                    self._attr_extra_state_attributes,
                 )
                 new_state = self._process_data(data=endpoint_data)
+                _LOGGER.debug("Calculated new state: %s", new_state)
                 if new_state not in (0, None) or self._state in (0, None):
                     self._state = new_state
+                    _LOGGER.debug("Sensor state updated to: %s", self._state)
             else:
                 _LOGGER.error(
-                    "Expected endpoint_data to be a dictionary, got %s",
+                    "Expected endpoint_data to be a dictionary for %s, got %s",
+                    self._endpoint,
                     type(endpoint_data),
                 )
                 _LOGGER.debug("Data: %s", endpoint_data)
+        _LOGGER.debug("Exiting AudiobookshelfSensor.async_update")
