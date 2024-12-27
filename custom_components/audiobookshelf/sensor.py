@@ -1,3 +1,4 @@
+# sensor.py
 """Module containing the sensor platform for the Audiobookshelf integration."""
 
 import logging
@@ -91,6 +92,15 @@ def do_nothing(data: dict) -> dict:
     return data
 
 
+def extract_server_version(data: dict) -> str | None:
+    """Extract the server version from the authorize endpoint."""
+    try:
+        return data["serverSettings"]["version"]
+    except KeyError:
+        _LOGGER.warning("Server version not found in API response.")
+        return None
+
+
 type Sensor = dict[str, Any]
 
 # simple polling sensors
@@ -115,6 +125,13 @@ sensors: dict[str, Sensor] = {
         "data_function": count_libraries,
         "attributes_function": get_library_stats,
         "unit": "libraries",
+    },
+    "server_version": {
+        "endpoint": "api/authorize",
+        "name": "Audiobookshelf Server Version",
+        "data_function": extract_server_version,
+        "attributes_function": do_nothing,
+        "unit": None,
     },
 }
 
@@ -309,11 +326,10 @@ class AudiobookshelfDataUpdateCoordinator(DataUpdateCoordinator):
         """Fetch data from API endpoint."""
         headers = {"Authorization": f"Bearer {self.conf[CONF_API_KEY]}"}
         data = {}
+        # Ensure the 'api/authorize' endpoint is included
+        unique_endpoints: set[str] = {sensor["endpoint"] for sensor in sensors.values()}
         try:
             async with aiohttp.ClientSession() as session:
-                unique_endpoints: set[str] = {
-                    sensor["endpoint"] for sensor in sensors.values()
-                }
                 _LOGGER.debug(
                     "Unique endpoints:\n%s",
                     "\n".join(endpoint for endpoint in unique_endpoints),
@@ -357,7 +373,11 @@ class AudiobookshelfSensor(RestoreEntity, Entity):
     async def async_added_to_hass(self) -> None:
         """Call when entity is added to hass."""
         await super().async_added_to_hass()
-        if (last_state := await self.async_get_last_state()) is not None:
+        # Only restore state if it's not the server version sensor
+        if (
+            self._endpoint != "api/authorize"
+            and (last_state := await self.async_get_last_state()) is not None
+        ):
             self._state = last_state.state
             self._attributes = last_state.attributes
 
