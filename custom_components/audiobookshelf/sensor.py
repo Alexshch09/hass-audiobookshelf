@@ -50,7 +50,7 @@ def clean_user_attributes(data: dict) -> dict:
 def count_open_sessions(data: dict) -> int:
     """Count the number of open stream sessions."""
     _LOGGER.debug("Entering count_open_sessions with data: %s", data)
-    count = len(data["openSessions"])
+    count = len(data.get("openSessions", []))
     _LOGGER.debug("Exiting count_open_sessions, returning: %s", count)
     return count
 
@@ -184,42 +184,30 @@ async def async_setup_entry(
 
     _LOGGER.debug("Configuration data: %s", clean_config(conf.copy()))
 
-    async with aiohttp.ClientSession() as session:
-        headers = {"Authorization": f"Bearer {conf[CONF_API_KEY]}"}
-        _LOGGER.debug("Headers for API request: %s", headers)
-        url = f"{conf[CONF_URL]}/api/libraries"
-        _LOGGER.debug("Fetching libraries from: %s", url)
-        try:
-            async with session.get(url, headers=headers) as response:
-                _LOGGER.debug("Response status from API: %s", response.status)
-                if response.status != HTTP_OK:
-                    msg = f"Failed to connect to API: {response.status}"
-                    _LOGGER.error("%s", msg)
-                    raise ConfigEntryNotReady(msg)
-                _LOGGER.debug("Successfully connected to API")
-        except aiohttp.ClientError as e:
-            _LOGGER.error("AIOHTTP error during API request: %s", e)
-            raise ConfigEntryNotReady(f"Failed to connect to API: {e}")
-
     coordinator = AudiobookshelfDataUpdateCoordinator(hass, entry)
     _LOGGER.debug("AudiobookshelfDataUpdateCoordinator initialized: %s", coordinator)
 
-    libraries: list[Library] = await coordinator.get_libraries()
-    _LOGGER.debug("Retrieved libraries: %s", libraries)
-    coordinator.generate_library_sensors(libraries)
-    _LOGGER.debug("Generated library sensors")
+    try:
+        libraries: list[Library] = await coordinator.get_libraries()
+        _LOGGER.debug("Retrieved libraries: %s", libraries)
+        coordinator.generate_library_sensors(libraries)
+        _LOGGER.debug("Generated library sensors")
 
-    await coordinator.async_config_entry_first_refresh()
-    _LOGGER.debug("Initial data fetch completed")
+        await coordinator.async_config_entry_first_refresh()
+        _LOGGER.debug("Initial data fetch completed")
 
-    entities = [
-        AudiobookshelfSensor(coordinator, sensor) for sensor in sensors.values()
-    ]
-    _LOGGER.debug("Created sensor entities: %s", entities)
+        entities = [
+            AudiobookshelfSensor(coordinator, sensor) for sensor in sensors.values()
+        ]
+        _LOGGER.debug("Created sensor entities: %s", entities)
 
-    _LOGGER.debug("Adding entities to Home Assistant: %s", entities)
-    async_add_entities(entities, update_before_add=True)
-    _LOGGER.debug("Exiting async_setup_entry")
+        _LOGGER.debug("Adding entities to Home Assistant: %s", entities)
+        async_add_entities(entities, update_before_add=True)
+        _LOGGER.debug("Exiting async_setup_entry")
+
+    except UpdateFailed as e:
+        _LOGGER.error("Error setting up sensor platform: %s", e)
+        raise ConfigEntryNotReady(f"Error setting up sensor platform: {e}") from e
 
 
 @dataclass
@@ -423,19 +411,42 @@ class AudiobookshelfDataUpdateCoordinator(DataUpdateCoordinator):
                     url = f"{self.conf[CONF_URL]}/{endpoint}"
                     _LOGGER.debug("Fetching data from: %s", url)
                     try:
-                        async with session.get(url, headers=headers) as response:
-                            _LOGGER.debug(
-                                "Response status for %s: %s", endpoint, response.status
-                            )
-                            if response.status != HTTP_OK:
-                                error_message = f"Error fetching data for {endpoint}: {response.status}"
-                                _LOGGER.error(error_message)
-                                raise UpdateFailed(error_message)
-                            response_data = await response.json()
-                            data[endpoint] = response_data
-                            _LOGGER.debug(
-                                "Data received for %s: %s", endpoint, response_data
-                            )
+                        if endpoint == "api/authorize":
+                            async with session.post(
+                                url, headers=headers
+                            ) as response:  # Changed to POST
+                                _LOGGER.debug(
+                                    "Response status for %s (POST): %s",
+                                    endpoint,
+                                    response.status,
+                                )
+                                if response.status != HTTP_OK:
+                                    error_message = f"Error fetching data for {endpoint}: {response.status}"
+                                    _LOGGER.error(error_message)
+                                    raise UpdateFailed(error_message)
+                                response_data = await response.json()
+                                data[endpoint] = response_data
+                                _LOGGER.debug(
+                                    "Data received for %s: %s", endpoint, response_data
+                                )
+
+                        else:
+                            async with session.get(url, headers=headers) as response:
+                                _LOGGER.debug(
+                                    "Response status for %s (GET): %s",
+                                    endpoint,
+                                    response.status,
+                                )
+                                if response.status != HTTP_OK:
+                                    error_message = f"Error fetching data for {endpoint}: {response.status}"
+                                    _LOGGER.error(error_message)
+                                    raise UpdateFailed(error_message)
+                                response_data = await response.json()
+                                data[endpoint] = response_data
+                                _LOGGER.debug(
+                                    "Data received for %s: %s", endpoint, response_data
+                                )
+
                     except aiohttp.ClientError as e:
                         _LOGGER.error("AIOHTTP error fetching %s: %s", endpoint, e)
                         raise UpdateFailed(f"Error fetching data for {endpoint}: {e}")
