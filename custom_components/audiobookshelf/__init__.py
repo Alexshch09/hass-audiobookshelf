@@ -1,3 +1,4 @@
+# __init__.py
 """Custom component for Audiobookshelf."""
 
 import logging
@@ -8,10 +9,16 @@ from homeassistant.const import CONF_API_KEY, CONF_SCAN_INTERVAL, CONF_URL
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
+import aiohttp  # Import aiohttp
 
 from custom_components.audiobookshelf.config_flow import validate_config
-
-from .const import DOMAIN, ISSUE_URL, PLATFORMS, VERSION
+from custom_components.audiobookshelf.const import (
+    DOMAIN,
+    ISSUE_URL,
+    PLATFORMS,
+    VERSION,
+    HTTP_OK,
+)
 
 CONFIG_SCHEMA = vol.Schema(
     {
@@ -62,6 +69,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.debug(
         "Setting up Audiobookshelf with config: %s", clean_config(entry.data.copy())
     )
+
+    # Test the API connection here
+    conf = entry.data
+    try:
+        async with aiohttp.ClientSession() as session:
+            headers = {"Authorization": f"Bearer {conf[CONF_API_KEY]}"}
+            async with session.get(
+                f"{conf[CONF_URL]}/api/libraries", headers=headers
+            ) as response:
+                if response.status != HTTP_OK:
+                    msg = f"Failed to connect to Audiobookshelf API: {response.status}"
+                    _LOGGER.error(msg)
+                    raise ConfigEntryNotReady(msg)
+    except aiohttp.ClientError as e:
+        _LOGGER.error(f"Error connecting to Audiobookshelf API: {e}")
+        raise ConfigEntryNotReady(f"Error connecting to Audiobookshelf API: {e}")
 
     validate_config(entry.data.copy())
 
